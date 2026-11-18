@@ -1,0 +1,63 @@
+// CPU.hdl - Hack CPU (Nand2Tetris Project 5)
+// Author: Vansh Nibhoria (Roll No. 2501730240)
+//
+// Instruction format:
+//   A-instruction: 0vvv vvvv vvvv vvvv
+//   C-instruction: 111a cccc ccdd djjj
+//     bit 15 = 1, bit 12 = a, bits 11..6 = ALU control (zx nx zy ny f no),
+//     bits 5,4,3 = dest (A, D, M), bits 2,1,0 = jump (<0, =0, >0)
+
+CHIP CPU {
+
+    IN  inM[16],         // M value input  (M = contents of RAM[A])
+        instruction[16], // Instruction for execution
+        reset;           // Signals whether to re-start the current program
+
+    OUT outM[16],        // M value output
+        writeM,          // Write to M?
+        addressM[15],    // Address in data memory (of M)
+        pc[15];          // Address of next instruction
+
+    PARTS:
+    // ---- Instruction type ----
+    Not(in=instruction[15], out=isA);
+    Not(in=isA, out=isC);
+
+    // ---- A register ----
+    // Input: the instruction itself (A-instruction) or the ALU output (C-instruction)
+    Mux16(a=instruction, b=aluOut, sel=isC, out=aIn);
+    // Loads on an A-instruction, or on a C-instruction whose dest includes A (bit 5)
+    And(a=isC, b=instruction[5], out=cLoadA);
+    Or(a=isA, b=cLoadA, out=loadA);
+    ARegister(in=aIn, load=loadA, out=aOut, out[0..14]=addressM);
+
+    // ---- ALU y input: A or M, chosen by the 'a' bit (bit 12) ----
+    Mux16(a=aOut, b=inM, sel=instruction[12], out=aOrM);
+
+    // ---- D register: loads on a C-instruction with dest D (bit 4) ----
+    And(a=isC, b=instruction[4], out=loadD);
+    DRegister(in=aluOut, load=loadD, out=dOut);
+
+    // ---- ALU ----
+    ALU(x=dOut, y=aOrM,
+        zx=instruction[11], nx=instruction[10],
+        zy=instruction[9],  ny=instruction[8],
+        f=instruction[7],   no=instruction[6],
+        out=aluOut, out=outM, zr=zr, ng=ng);
+
+    // ---- writeM: C-instruction with dest M (bit 3) ----
+    And(a=isC, b=instruction[3], out=writeM);
+
+    // ---- Jump logic ----
+    Or(a=zr, b=ng, out=zrOrNg);
+    Not(in=zrOrNg, out=pos);                 // result > 0
+    And(a=instruction[2], b=ng,  out=jlt);   // j1: jump if < 0
+    And(a=instruction[1], b=zr,  out=jeq);   // j2: jump if = 0
+    And(a=instruction[0], b=pos, out=jgt);   // j3: jump if > 0
+    Or(a=jlt, b=jeq, out=jle);
+    Or(a=jle, b=jgt, out=jumpCond);
+    And(a=isC, b=jumpCond, out=jump);        // only C-instructions can jump
+
+    // ---- Program counter ----
+    PC(in=aOut, load=jump, inc=true, reset=reset, out[0..14]=pc);
+}
